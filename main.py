@@ -7,7 +7,9 @@ import torchreid
 import torch
 import numpy as np
 import cv2
+from PIL import Image
 from ultralytics import YOLO
+from torchvision import transforms
 
 # def preprocess_image(image_path, target_size=(128, 64), mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)):
 #     """
@@ -45,10 +47,45 @@ from ultralytics import YOLO
 
 track_history = defaultdict(lambda: [])
 persons = {}
-person_id_counter = [0]
+person_id_counter = [100]
 
 
-def preprocess_frame(frame, target_size=(128, 64), mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)):
+def preprocess_frame3(frame, need=False):
+    preprocess = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Resize((256, 128)),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
+    preprocessed_frame = preprocess(frame)
+    return preprocessed_frame.unsqueeze(0)
+
+def preprocess_frame2(frame, need=False):
+    if need:
+        preprocess = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((256, 128)),
+            # transforms.CenterCrop((256, 128)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+    else:
+        preprocess = transforms.Compose([
+            transforms.Resize((256, 128)),
+            # transforms.CenterCrop((256, 128)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+
+    # make the same but without toPilImage
+
+    preprocessed_frame = preprocess(frame)
+    return preprocessed_frame.unsqueeze(0)
+
+
+
+
+def preprocess_frame(frame, target_size=(256, 128), mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)):
     # Resize the frame to the target size
     frame = cv2.resize(frame, target_size)
 
@@ -67,23 +104,39 @@ def preprocess_frame(frame, target_size=(128, 64), mean=(0.485, 0.456, 0.406), s
     return frame
 
 
-def track_reid():
+def setReidModel():
     model = torchreid.models.build_model(
         name='mobilenetv2_x1_4',  # Replace with your model architecture
         num_classes=702,  # Replace with the number of classes in your dataset
     )
-
-    yolo_model = YOLO('yolov8x.pt')
-    yolo_classes = ["person"]
-
     device = torch.device('cpu')
     model.to(device)
-
-    # Load the checkpoint
-    checkpoint = torch.load(r'C:\Users\Ektomo\PycharmProjects\pythonProject2\model\model.pth.tar-20',
+    checkpoint = torch.load(r'C:\Users\Ektomo\PycharmProjects\pythonProject2\model\model.pth.tar-32',
                             map_location=torch.device('cpu'))
     model.load_state_dict(checkpoint['state_dict'])
     model.eval()
+    return model
+
+
+def get_ideal_embeddings(paths, model):
+    for id, path in paths:
+        img = Image.open(path)
+        data = np.array(img)
+        pre_frame = preprocess_frame3(data)
+        with torch.no_grad():
+            cur_embedding = model(pre_frame)
+            if id in persons:
+                persons[id].append(cur_embedding)
+            else:
+                persons[id] = [cur_embedding]
+
+
+def track_reid(model):
+    yolo_model = YOLO('yolov8x.pt')
+    yolo_classes = ["person"]
+
+    # Load the checkpoint
+
     cap = cv2.VideoCapture(0)
 
     while cap.isOpened():
@@ -93,49 +146,60 @@ def track_reid():
 
         # Preprocess the frame (resize and normalize)
         results = yolo_model.track(frame, persist=True, classes=[0])
-        boxes = results[0].boxes.xywh.cpu()
-        id_box = results[0].boxes.id
-        # annotated_frame = results[0].plot()
-        if id_box:
+        for result in results:
 
-            cur_id_box = -1
-
-            pre_frame = preprocess_frame(frame)
-            cur_embedding = model(pre_frame)
-            cur_embedding = cur_embedding.detach().numpy()
-            found_match = False
-            for person_id, data in persons.items():
-                prev_embedding = data['embedding']
-                similarity = np.dot(cur_embedding, prev_embedding.T) / (
-                        np.linalg.norm(cur_embedding) * np.linalg.norm(prev_embedding))
-                print("Похоже на", similarity)
-                if similarity > 0.7:
-                    found_match = True
-                    cur_id_box = person_id
-                    data['embedding'] = cur_embedding
-                    break
-            if not found_match:
-                person_id_counter[0] += 1
-                person_id = person_id_counter[0]
-                cur_id_box = person_id
-                persons[person_id] = {"embedding": cur_embedding}
-
-            if cur_id_box:
-                # track_ids = cur_id_box
-
-                # for box, track_id in zip(boxes, cur_id_box):
-                # fixme Only plot the track for the person with ID 5 for this example
-                # if track_id != 5:
-                #     continue
+            boxes = result.boxes.xywh.cpu()
+            id_box = result.boxes.id
+            # annotated_frame = results[0].plot()
+            if id_box is not None:
+                print(type(id_box))
+                cur_id_box = -1
                 x, y, w, h = boxes[0]
-                track = track_history[cur_id_box]
-                track.append((float(x), float(y)))  # x, y center point
-                if len(track) > 30:  # retain 90 tracks for 90 frames
-                    track.pop(0)
-                # draw bbox
-                cv2.rectangle(frame, (int(x - w / 2), int(y - h / 2)), (int(x + w / 2), int(y + h / 2)), (0, 0, 255), 2)
-                # draw ID
-                cv2.putText(frame, str(cur_id_box), (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                cropped_image = frame[int(x - w / 2):int(x + w / 2), int(y - h / 2):int(y + h / 2)]
+
+                pre_frame = preprocess_frame3(cropped_image, True)
+
+                with torch.no_grad():
+                    cur_embedding = model(pre_frame)
+                # cur_embedding = cur_embedding.detach().numpy()
+                found_match = False
+                for person_id, data in persons.items():
+                    # ideal_embeddings = data['embeddings']
+                    print(len(data), person_id)
+                    for embed in data:
+                        similarity = np.dot(cur_embedding, embed.T) / (
+                                np.linalg.norm(cur_embedding) * np.linalg.norm(embed))
+                        print("Похоже на", similarity)
+                        if similarity > 0.72:
+                            found_match = True
+                            cur_id_box = person_id
+                            # data['embedding'] = cur_embedding
+                            break
+                    if found_match:
+                        break
+                # if not found_match:
+                #     person_id_counter[0] += 1
+                #     person_id = person_id_counter[0]
+                #     cur_id_box = person_id
+                #     persons[person_id] = [cur_embedding]
+
+                if cur_id_box:
+                    # track_ids = cur_id_box
+
+                    # for box, track_id in zip(boxes, cur_id_box):
+                    # fixme Only plot the track for the person with ID 5 for this example
+                    # if track_id != 5:
+                    #     continue
+
+                    track = track_history[cur_id_box]
+                    track.append((float(x), float(y)))  # x, y center point
+                    if len(track) > 30:  # retain 90 tracks for 90 frames
+                        track.pop(0)
+                    # draw bbox
+                    cv2.rectangle(frame, (int(x - w / 2), int(y - h / 2)), (int(x + w / 2), int(y + h / 2)),
+                                  (0, 0, 255), 2)
+                    # draw ID
+                    cv2.putText(frame, str(cur_id_box), (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
         cv2.imshow('Frame with Bounding Box', frame)
 
@@ -148,6 +212,12 @@ def track_reid():
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
-    track_reid()
-
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+    base_path = r'C:\Users\Ektomo\PycharmProjects\pythonProject2\reid'
+    model_reid = setReidModel()
+    ideal_paths = []
+    for i in range(1, 7):
+        for j in range(1, 5):
+            ideal_paths.append((i, base_path + f"\\{i}_{j}.jpg"))
+    get_ideal_embeddings(ideal_paths,
+                         model_reid)
+    track_reid(model_reid)
