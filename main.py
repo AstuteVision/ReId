@@ -122,7 +122,7 @@ def get_ideal_embeddings(paths, model):
     for id, path in paths:
         img = Image.open(path)
         data = np.array(img)
-        pre_frame = preprocess_frame3(data)
+        pre_frame = preprocess_frame2(img)
         with torch.no_grad():
             cur_embedding = model(pre_frame)
             if id in persons:
@@ -152,54 +152,57 @@ def track_reid(model):
             id_box = result.boxes.id
             # annotated_frame = results[0].plot()
             if id_box is not None:
-                print(type(id_box))
-                cur_id_box = -1
-                x, y, w, h = boxes[0]
-                cropped_image = frame[int(x - w / 2):int(x + w / 2), int(y - h / 2):int(y + h / 2)]
+                for box in boxes:
+                    print(type(id_box))
+                    cur_id_box = -1
+                    x, y, w, h = box
+                    temp_w = int(x + w / 2)
+                    temp_h = int(y + h / 2)
+                    cropped_image = frame[int(x - w / 2):temp_w , int(y - h / 2):temp_h]
 
-                pre_frame = preprocess_frame3(cropped_image, True)
+                    pre_frame = preprocess_frame2(cropped_image, True)
 
-                with torch.no_grad():
-                    cur_embedding = model(pre_frame)
-                # cur_embedding = cur_embedding.detach().numpy()
-                found_match = False
-                for person_id, data in persons.items():
-                    # ideal_embeddings = data['embeddings']
-                    print(len(data), person_id)
-                    for embed in data:
-                        similarity = np.dot(cur_embedding, embed.T) / (
-                                np.linalg.norm(cur_embedding) * np.linalg.norm(embed))
-                        print("Похоже на", similarity)
-                        if similarity > 0.72:
-                            found_match = True
-                            cur_id_box = person_id
-                            # data['embedding'] = cur_embedding
+                    with torch.no_grad():
+                        cur_embedding = model(pre_frame)
+                    # cur_embedding = cur_embedding.detach().numpy()
+                    found_match = False
+                    for person_id, data in persons.items():
+                        # ideal_embeddings = data['embeddings']
+                        print(len(data), person_id)
+                        for embed in data:
+                            similarity = np.dot(cur_embedding, embed.T) / (
+                                    np.linalg.norm(cur_embedding) * np.linalg.norm(embed))
+                            print("Похоже на", similarity)
+                            if similarity > 0.72:
+                                found_match = True
+                                cur_id_box = person_id
+                                # data['embedding'] = cur_embedding
+                                break
+                        if found_match:
                             break
-                    if found_match:
-                        break
-                # if not found_match:
-                #     person_id_counter[0] += 1
-                #     person_id = person_id_counter[0]
-                #     cur_id_box = person_id
-                #     persons[person_id] = [cur_embedding]
+                    # if not found_match:
+                    #     person_id_counter[0] += 1
+                    #     person_id = person_id_counter[0]
+                    #     cur_id_box = person_id
+                    #     persons[person_id] = [cur_embedding]
 
-                if cur_id_box:
-                    # track_ids = cur_id_box
+                    if cur_id_box:
+                        # track_ids = cur_id_box
 
-                    # for box, track_id in zip(boxes, cur_id_box):
-                    # fixme Only plot the track for the person with ID 5 for this example
-                    # if track_id != 5:
-                    #     continue
+                        # for box, track_id in zip(boxes, cur_id_box):
+                        # fixme Only plot the track for the person with ID 5 for this example
+                        # if track_id != 5:
+                        #     continue
 
-                    track = track_history[cur_id_box]
-                    track.append((float(x), float(y)))  # x, y center point
-                    if len(track) > 30:  # retain 90 tracks for 90 frames
-                        track.pop(0)
-                    # draw bbox
-                    cv2.rectangle(frame, (int(x - w / 2), int(y - h / 2)), (int(x + w / 2), int(y + h / 2)),
-                                  (0, 0, 255), 2)
-                    # draw ID
-                    cv2.putText(frame, str(cur_id_box), (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                        track = track_history[cur_id_box]
+                        track.append((float(x), float(y)))  # x, y center point
+                        if len(track) > 30:  # retain 90 tracks for 90 frames
+                            track.pop(0)
+                        # draw bbox
+                        cv2.rectangle(frame, (int(x - w / 2), int(y - h / 2)), (int(x + w / 2), int(y + h / 2)),
+                                      (0, 0, 255), 2)
+                        # draw ID
+                        cv2.putText(frame, str(cur_id_box), (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
         cv2.imshow('Frame with Bounding Box', frame)
 
