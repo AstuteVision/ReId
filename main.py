@@ -54,6 +54,7 @@ false_positive = 0
 true_negative = [0]
 false_negative = [0]
 
+
 # третий вариант, как будто самый быстрый, сюда в случае снятия вектора передаем ndarray и frame
 def preprocess_frame3(frame, need=False):
     preprocess = transforms.Compose([
@@ -64,6 +65,7 @@ def preprocess_frame3(frame, need=False):
 
     preprocessed_frame = preprocess(frame)
     return preprocessed_frame.unsqueeze(0)
+
 
 # второй вариант, как будто работает дольше, в этом случае при снятии векторов передаем сразу img
 def preprocess_frame2(frame, need=False):
@@ -88,6 +90,7 @@ def preprocess_frame2(frame, need=False):
     preprocessed_frame = preprocess(frame)
     return preprocessed_frame.unsqueeze(0)
 
+
 # первый вариант, не используем
 def preprocess_frame(frame, target_size=(256, 128), mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)):
     # Resize the frame to the target size
@@ -109,7 +112,6 @@ def preprocess_frame(frame, target_size=(256, 128), mean=(0.485, 0.456, 0.406), 
 
 
 def setReidModel():
-
     model = torchreid.models.build_model(
         name='mobilenetv2_x1_4',  # Replace with your model architecture
         num_classes=702,  # Replace with the number of classes in your dataset
@@ -174,25 +176,44 @@ def track_reid(reid_model):
                         cur_embedding = reid_model(pre_frame)
                     # cur_embedding = cur_embedding.detach().numpy()
                     found_match = False
+                    matrix_percent = {}
                     for person_id, data in persons.items():
                         # ideal_embeddings = data['embeddings']
                         print(person_id)
+                        matrix_percent[person_id] = []
+                        cur_similarity = 0
+                        find_person = -1
                         for embed in data:
                             similarity = np.dot(cur_embedding, embed.T) / (
                                     np.linalg.norm(cur_embedding) * np.linalg.norm(embed))
-                            print("Похоже на", similarity)
-                            if similarity > 0.75:
-                                found_match = True
-                                cur_id_box = person_id
-                                break
-                        if found_match:
-                            break
+                            matrix_percent[person_id].append(similarity)
 
-                    if found_match:
-                        if waiting_class == cur_id_box:
-                            true_positive[0] += 1
-                        else:
-                            false_negative[0] += 1
+                            print("Похоже на", similarity)
+                            # if similarity > 0.75:
+                            #     found_match = True
+                            #     cur_id_box = person_id
+                            #     break
+                        mean_similarity = np.mean(matrix_percent[person_id])
+                        print('mean_similaruty for', person_id, mean_similarity)
+
+                        if mean_similarity > cur_similarity:
+                            cur_similarity = mean_similarity
+                            find_person = person_id
+
+                        if cur_similarity > 0.70:
+                            found_match = True
+                            cur_id_box = find_person
+                            # break
+                        # if found_match:
+                        #     break
+
+                    if not found_match:
+                        cur_id_box = -1
+
+                    if waiting_class == cur_id_box:
+                        true_positive[0] += 1
+                    else:
+                        false_negative[0] += 1
 
                     cv2.rectangle(frame, (int(x - w / 2), int(y - h / 2)), (int(x + w / 2), int(y + h / 2)),
                                   (0, 0, 255), 2)
