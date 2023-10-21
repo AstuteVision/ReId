@@ -48,30 +48,36 @@ from torchvision import transforms
 track_history = defaultdict(lambda: [])
 persons = {}
 person_id_counter = [100]
+waiting_class = 0
+true_positive = [0]
+false_positive = 0
+true_negative = [0]
+false_negative = [0]
 
-
+# третий вариант, как будто самый быстрый, сюда в случае снятия вектора передаем ndarray и frame
 def preprocess_frame3(frame, need=False):
     preprocess = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Resize((256, 128)),
+        transforms.Resize((256, 128), antialias=None),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
     preprocessed_frame = preprocess(frame)
     return preprocessed_frame.unsqueeze(0)
 
+# второй вариант, как будто работает дольше, в этом случае при снятии векторов передаем сразу img
 def preprocess_frame2(frame, need=False):
     if need:
         preprocess = transforms.Compose([
             transforms.ToPILImage(),
-            transforms.Resize((256, 128)),
+            transforms.Resize((256, 128), antialias=None),
             # transforms.CenterCrop((256, 128)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
     else:
         preprocess = transforms.Compose([
-            transforms.Resize((256, 128)),
+            transforms.Resize((256, 128), antialias=None),
             # transforms.CenterCrop((256, 128)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -82,9 +88,7 @@ def preprocess_frame2(frame, need=False):
     preprocessed_frame = preprocess(frame)
     return preprocessed_frame.unsqueeze(0)
 
-
-
-
+# первый вариант, не используем
 def preprocess_frame(frame, target_size=(256, 128), mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)):
     # Resize the frame to the target size
     frame = cv2.resize(frame, target_size)
@@ -105,13 +109,14 @@ def preprocess_frame(frame, target_size=(256, 128), mean=(0.485, 0.456, 0.406), 
 
 
 def setReidModel():
+
     model = torchreid.models.build_model(
         name='mobilenetv2_x1_4',  # Replace with your model architecture
         num_classes=702,  # Replace with the number of classes in your dataset
     )
     device = torch.device('cpu')
     model.to(device)
-    checkpoint = torch.load(r'C:\Users\Ektomo\PycharmProjects\pythonProject2\model\model.pth.tar-32',
+    checkpoint = torch.load(r'C:\Users\Ektomo\PycharmProjects\pythonProject2\model\model.pth.tar-50',
                             map_location=torch.device('cpu'))
     model.load_state_dict(checkpoint['state_dict'])
     model.eval()
@@ -122,7 +127,7 @@ def get_ideal_embeddings(paths, model):
     for id, path in paths:
         img = Image.open(path)
         data = np.array(img)
-        pre_frame = preprocess_frame2(img)
+        pre_frame = preprocess_frame3(data)
         with torch.no_grad():
             cur_embedding = model(pre_frame)
             if id in persons:
@@ -131,11 +136,8 @@ def get_ideal_embeddings(paths, model):
                 persons[id] = [cur_embedding]
 
 
-def track_reid(model):
+def track_reid(reid_model):
     yolo_model = YOLO('yolov8x.pt')
-    yolo_classes = ["person"]
-
-    # Load the checkpoint
 
     cap = cv2.VideoCapture(0)
 
@@ -152,62 +154,56 @@ def track_reid(model):
             id_box = result.boxes.id
             # annotated_frame = results[0].plot()
             if id_box is not None:
-                for box in boxes:
+                for idx in range(len(boxes)):
                     print(type(id_box))
-                    cur_id_box = -1
-                    x, y, w, h = box
+                    cur_id_box = result.boxes[idx].id
+                    x, y, w, h = boxes[idx]
                     temp_w = int(x + w / 2)
                     temp_h = int(y + h / 2)
-                    cropped_image = frame[int(x - w / 2):temp_w , int(y - h / 2):temp_h]
 
-                    pre_frame = preprocess_frame2(cropped_image, True)
+                    cropped_image = frame[int(y - h / 2):temp_h, int(x - w / 2):temp_w]
+                    # cropped_image = frame[int(y): int(y+h), int(x): int(x+h)]
+                    pre_frame = preprocess_frame3(cropped_image, True)
+
+                    track = track_history[cur_id_box]
+                    track.append((float(x), float(y)))  # x, y center point
+                    if len(track) > 30:  # retain 90 tracks for 90 frames
+                        track.pop(0)
 
                     with torch.no_grad():
-                        cur_embedding = model(pre_frame)
+                        cur_embedding = reid_model(pre_frame)
                     # cur_embedding = cur_embedding.detach().numpy()
                     found_match = False
                     for person_id, data in persons.items():
                         # ideal_embeddings = data['embeddings']
-                        print(len(data), person_id)
+                        print(person_id)
                         for embed in data:
                             similarity = np.dot(cur_embedding, embed.T) / (
                                     np.linalg.norm(cur_embedding) * np.linalg.norm(embed))
                             print("Похоже на", similarity)
-                            if similarity > 0.72:
+                            if similarity > 0.75:
                                 found_match = True
                                 cur_id_box = person_id
-                                # data['embedding'] = cur_embedding
                                 break
                         if found_match:
                             break
-                    # if not found_match:
-                    #     person_id_counter[0] += 1
-                    #     person_id = person_id_counter[0]
-                    #     cur_id_box = person_id
-                    #     persons[person_id] = [cur_embedding]
 
-                    if cur_id_box:
-                        # track_ids = cur_id_box
+                    if found_match:
+                        if waiting_class == cur_id_box:
+                            true_positive[0] += 1
+                        else:
+                            false_negative[0] += 1
 
-                        # for box, track_id in zip(boxes, cur_id_box):
-                        # fixme Only plot the track for the person with ID 5 for this example
-                        # if track_id != 5:
-                        #     continue
-
-                        track = track_history[cur_id_box]
-                        track.append((float(x), float(y)))  # x, y center point
-                        if len(track) > 30:  # retain 90 tracks for 90 frames
-                            track.pop(0)
-                        # draw bbox
-                        cv2.rectangle(frame, (int(x - w / 2), int(y - h / 2)), (int(x + w / 2), int(y + h / 2)),
-                                      (0, 0, 255), 2)
-                        # draw ID
-                        cv2.putText(frame, str(cur_id_box), (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                    cv2.rectangle(frame, (int(x - w / 2), int(y - h / 2)), (int(x + w / 2), int(y + h / 2)),
+                                  (0, 0, 255), 2)
+                    # draw ID
+                    cv2.putText(frame, str(cur_id_box), (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255),
+                                2)
 
         cv2.imshow('Frame with Bounding Box', frame)
-
-        # Exit the loop if a key is pressed (e.g., press 'q' to quit)
         if cv2.waitKey(1) & 0xFF == ord('q'):
+            # Печатаем результат на выходе
+            print("Метрика", f'recall: {true_positive[0] / true_positive[0] + false_negative[0]}')
             cap.release()
             cv2.destroyAllWindows()
             break
@@ -215,12 +211,19 @@ def track_reid(model):
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
+    # Путь к файлам с идеальными фото
     base_path = r'C:\Users\Ektomo\PycharmProjects\pythonProject2\reid'
+    # Устанавливаем модель, по хорошему для тестов сюда можно положить имя в параметры функции
     model_reid = setReidModel()
     ideal_paths = []
+    # Указываем какой класс ждем
+    waiting_class = 4
+    # i - количество классов, j - количество изображений в классе(по умолчанию делаем 4)
     for i in range(1, 7):
         for j in range(1, 5):
             ideal_paths.append((i, base_path + f"\\{i}_{j}.jpg"))
+    # Создаем массив идеальных векторных представлений
     get_ideal_embeddings(ideal_paths,
                          model_reid)
+    # Трекаем с созданной моделькой
     track_reid(model_reid)
