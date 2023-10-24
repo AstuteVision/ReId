@@ -10,6 +10,7 @@ import cv2
 from PIL import Image
 from ultralytics import YOLO
 from torchvision import transforms
+from torchvision.models import mobilenetv2, MobileNet_V2_Weights, MobileNetV3
 
 # def preprocess_image(image_path, target_size=(128, 64), mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)):
 #     """
@@ -53,6 +54,11 @@ true_positive = [0]
 false_positive = 0
 true_negative = [0]
 false_negative = [0]
+
+
+
+def euclidean_dist(A, B):
+    return np.linalg.norm(A - B)
 
 
 # третий вариант, как будто самый быстрый, сюда в случае снятия вектора передаем ndarray и frame
@@ -112,16 +118,27 @@ def preprocess_frame(frame, target_size=(256, 128), mean=(0.485, 0.456, 0.406), 
 
 
 def setReidModel():
+    # model = torchreid.models.build_model(
+    #     name='mobilenetv2_x1_4',  # Replace with your model architecture
+    #     num_classes=702,  # Replace with the number of classes in your dataset
+    # )
     model = torchreid.models.build_model(
-        name='mobilenetv2_x1_4',  # Replace with your model architecture
-        num_classes=702,  # Replace with the number of classes in your dataset
+            name='osnet_x1_0',  # Replace with your model architecture
+            num_classes=702,  # Replace with the number of classes in your dataset
     )
+    # model = torchreid.models.build_model(
+    #     name='resnet101',  # Replace with your model architecture
+    #     num_classes=751,  # Replace with the number of classes in your dataset
+    # )
     device = torch.device('cpu')
     model.to(device)
-    checkpoint = torch.load(r'C:\Users\Ektomo\PycharmProjects\pythonProject2\model\model.pth.tar-50',
-                            map_location=torch.device('cpu'))
-    model.load_state_dict(checkpoint['state_dict'])
+    # checkpoint = torch.load(r"C:\Users\Ektomo\PycharmProjects\pythonProject2\model\zoo\osnet_x1_0.pth",
+    #                         map_location=torch.device('cpu'))
+    # model.load_state_dict(checkpoint['state_dict'])
+    torchreid.utils.load_pretrained_weights(model, r"C:\Users\Ektomo\PycharmProjects\pythonProject2\model\zoo\osnet_x1_0.pth")
     model.eval()
+    # model.mobilenet.load
+    # torchreid.utils.load_pretrained_weights(model, )
     return model
 
 
@@ -184,6 +201,8 @@ def track_reid(reid_model):
                         cur_similarity = 0
                         find_person = -1
                         for embed in data:
+                            # similarity = np.linalg.norm(cur_embedding - embed)
+                            #cosine лучше
                             similarity = np.dot(cur_embedding, embed.T) / (
                                     np.linalg.norm(cur_embedding) * np.linalg.norm(embed))
                             matrix_percent[person_id].append(similarity)
@@ -200,7 +219,7 @@ def track_reid(reid_model):
                             cur_similarity = mean_similarity
                             find_person = person_id
 
-                        if cur_similarity > 0.70:
+                        if cur_similarity > 0.65:
                             found_match = True
                             cur_id_box = find_person
                             # break
