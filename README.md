@@ -27,6 +27,7 @@ https://app.clear.ml/projects/6fff45728367482ab9970043665ffc97/experiments/1116e
 https://app.clear.ml/projects/6fff45728367482ab9970043665ffc97/experiments/f135de34f4b1445facdcd7f004475e87/output/execution
 
 Таблица с результатами:
+
 ![image](https://github.com/AstuteVision/ReId/assets/70652745/671c296c-01d5-4329-9307-0f292c5fb3ef)
 
 
